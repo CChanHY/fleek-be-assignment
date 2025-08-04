@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.schemas.job import JobCreateRequest, JobCreateResponse, JobStatusResponse, ErrorResponse
 from app.models.job import Job, JobStatus
-from app.tasks.media_generation import generate_media_task
+from app.tasks.media_generation import start_media_generation_workflow
 from app.services.storage_service import storage_service
 import logging
 
@@ -21,7 +21,7 @@ async def create_generation_job(request: JobCreateRequest):
             celery_task_id="temp"  # Will be updated after task creation
         )
         
-        task = generate_media_task.delay(job.id)
+        task = start_media_generation_workflow(job.id)
         
         job.celery_task_id = task.id
         await job.save()

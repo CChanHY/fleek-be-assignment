@@ -1,0 +1,81 @@
+Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> We need to break up the generate_media_task into separate subtasks because generating media files and persisting each of them can be blocking.
+  Once we generate the media files, let's trigger subtasks to save the generated media files to s3.
+  Reference: To implement a Celery workflow where you first generate a list of items (like images), then persist each item in parallel, and finally run a callback after all
+   persistence tasks are done, you need to **dynamically create a chord after the list is generated**. This is a common pattern, but it requires a small trick because the 
+  number of subtasks is only known at runtime.
+
+  ### The Problem
+
+  You want to do something like this (pseudocode):
+
+  workflow = chain(
+      ImageGenerations.s(),
+      lambda images: chord(
+          group(persist_image.s(img) for img in images),
+          all_done.s()
+      )
+  )
+  workflow.delay()
+
+  But Celery's canvas primitives (`chain`, `chord`, etc.) expect their structure to be known at the time you build the workflow, not at runtime. So you can't directly use a
+   lambda in a chain to dynamically create a chord.
+
+  ---
+
+  ### The Solution
+
+  **You need an intermediate task** that receives the list of images, then creates and triggers the chord. This is the recommended way to handle dynamic chords in Celery.
+
+  #### Example
+
+  ```python
+  @app.task
+  def trigger_persist_chord(images):
+      header = [persist_image.s(img) for img in images]
+      return chord(header)(all_done.s())
+
+  workflow = chain(
+      ImageGenerations.s(),
+      trigger_persist_chord.s()
+  )
+  workflow.delay()
+  ```
+
+  - `ImageGenerations` generates the list of images.
+  - `trigger_persist_chord` receives the list, creates a chord of `persist_image` tasks, and sets `all_done` as the callback.
+  - The chord ensures that `all_done` runs only after all `persist_image` tasks are finished.
+
+  **This pattern is discussed and recommended in the Celery community:**  
+  See [Celery chain with dynamically-defined chord - Stack Overflow](https://stackoverflow.com/questions/70294778/celery-chain-with-dynamically-defined-chord).
+
+  ---
+
+  ### Why this works
+
+  - You can’t build a chord with a dynamic header directly in a chain, because the header (list of tasks) is only known after the previous task runs.
+  - By using an intermediate task, you can generate the header at runtime and then launch the chord.
+
+  ---
+
+  ### References
+
+  - [Celery chain with dynamically-defined chord - Stack Overflow](https://stackoverflow.com/questions/70294778/celery-chain-with-dynamically-defined-chord)
+  - [Celery Canvas: Designing Work-flows](https://docs.celeryq.dev/en/stable/userguide/canvas.html)
+  - [Mastering Task Orchestration with Celery: Exploring Groups, Chains, and 
+  Chords](https://mazaherian.medium.com/mastering-task-orchestration-with-celery-exploring-groups-chains-and-chords-991f9e407a4f)
+
+  ---
+
+  If you want a ready-to-use code template for your use case, just let me know!
+
+---
+
+> /exit 
+  ⎿  (no content)
+---
+
+Let me know if you want this in a different format!

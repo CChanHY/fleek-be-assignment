@@ -1,8 +1,8 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional
-from celery import Task
+from typing import Optional, List, Dict
+from celery import Task, chord, group, chain
 from celery.exceptions import Retry
 from tortoise import Tortoise
 from app.tasks.celery_app import celery_app
@@ -21,6 +21,94 @@ class CallbackTask(Task):
     
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         logger.error(f"Task {task_id} failed: {exc}")
+
+
+@celery_app.task(bind=True, base=CallbackTask)
+def persist_media_to_s3(self, media_url: str, job_id: int) -> Dict:
+    """Upload a single media file to S3."""
+    async def _upload_media():
+        await Tortoise.init(config=TORTOISE_ORM)
+        try:
+            s3_key = await storage_service.upload_from_url(media_url, job_id)
+            logger.info(f"Successfully uploaded media {media_url} to S3 with key: {s3_key}")
+            return {
+                "media_url": media_url,
+                "s3_key": s3_key
+            }
+        finally:
+            await Tortoise.close_connections()
+    
+    return asyncio.run(_upload_media())
+
+
+@celery_app.task(bind=True, base=CallbackTask)
+def trigger_media_persistence_chord(self, media_urls: List[str], job_id: int):
+    """Trigger parallel media uploads using a dynamic chord."""
+    logger.info(f"Triggering chord for {len(media_urls)} media files for job {job_id}")
+    
+    # Create parallel upload tasks
+    upload_tasks = [persist_media_to_s3.s(media_url, job_id) for media_url in media_urls]
+    
+    # Create chord with callback
+    job_result = chord(upload_tasks)(finalize_media_generation.s(job_id))
+    return {"chord_id": job_result.id, "job_id": job_id}
+
+
+@celery_app.task(bind=True, base=CallbackTask)
+def finalize_media_generation(self, media_results: List[Dict], job_id: int) -> Dict:
+    """Finalize job after all media files have been uploaded."""
+    async def _finalize():
+        await Tortoise.init(config=TORTOISE_ORM)
+        try:
+            job = await Job.get(id=job_id)
+            await job.update_from_dict({
+                "status": JobStatus.COMPLETED,
+                "media": media_results,
+                "completed_at": datetime.utcnow()
+            })
+            await job.save()
+            
+            logger.info(f"Successfully completed media generation for job {job_id} with {len(media_results)} media files")
+            return {"status": "success", "media": media_results}
+        except Exception as e:
+            logger.error(f"Error finalizing job {job_id}: {str(e)}")
+            try:
+                job = await Job.get(id=job_id)
+                await job.update_from_dict({
+                    "status": JobStatus.FAILED,
+                    "error_message": f"Failed to finalize: {str(e)}"
+                })
+                await job.save()
+            except Exception as update_error:
+                logger.error(f"Failed to update job status during finalization: {str(update_error)}")
+            raise e
+        finally:
+            await Tortoise.close_connections()
+    
+    return asyncio.run(_finalize())
+
+
+def start_media_generation_workflow(job_id: int):
+    """Start the media generation workflow with dynamic chord for parallel uploads."""
+    workflow = chain(
+        generate_media_task.s(job_id),
+        orchestrate_media_workflow.s()
+    )
+    return workflow.delay()
+
+
+@celery_app.task(bind=True, base=CallbackTask)
+def orchestrate_media_workflow(self, result: Dict) -> Dict:
+    """Orchestrate the workflow after media generation is complete."""
+    if result.get("status") == "media_generated":
+        media_urls = result["media_urls"]
+        job_id = result["job_id"]
+        
+        # Trigger the chord for parallel uploads
+        return trigger_media_persistence_chord.delay(media_urls, job_id)
+    else:
+        # If media generation returned a different status, pass it through
+        return result
 
 
 @celery_app.task(bind=True, base=CallbackTask, autoretry_for=(Exception,))
@@ -49,23 +137,11 @@ def generate_media_task(self, job_id: int) -> dict:
             if not media_urls:
                 raise Exception("No media URLs returned from Replicate")
             
-            media_items = []
-            for media_url in media_urls:
-                s3_key = await storage_service.upload_from_url(media_url, job_id)
-                media_items.append({
-                    "media_url": media_url,
-                    "s3_key": s3_key
-                })
+            # Trigger parallel media persistence using chord
+            logger.info(f"Media generation completed for job {job_id}. Triggering parallel uploads.")
             
-            await job.update_from_dict({
-                "status": JobStatus.COMPLETED,
-                "media": media_items,
-                "completed_at": datetime.utcnow()
-            })
-            await job.save()
-            
-            logger.info(f"Successfully completed media generation for job {job_id}")
-            return {"status": "success", "media": media_items}
+            # Return media URLs to trigger the chord in a separate task
+            return {"status": "media_generated", "media_urls": media_urls, "job_id": job_id}
             
         except Exception as e:
             logger.error(f"Error in media generation for job {job_id}: {str(e)}")
