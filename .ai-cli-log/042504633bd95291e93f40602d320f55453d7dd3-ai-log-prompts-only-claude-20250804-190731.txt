@@ -1,0 +1,164 @@
+Absolutely! Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> Task Description
+
+  Your task involves building a microservice that performs asynchronous media generation using the Replicate API, with the following features:
+
+  1. API Layer (FastAPI)
+  Expose a POST /generate endpoint that accepts a prompt and generation parameters.
+
+  It should accept the following parameters:
+
+  model: Name of the model to use.
+  prompt: Used for text-to-image, text-to-audio, text-to-video, and text generation models. It’s the main way to describe what you want the model to generate.
+  num_outputs: Controls how many results to generate (e.g., multiple images, audio clips, etc.).
+  seed: Used for reproducibility in generative models (images, audio, video).
+  output_format: Some models let you specify the format of the output file (e.g., jpg, png, wav, mp3).
+
+  The endpoint should enqueue a job to an asynchronous task queue for background processing.
+
+  A GET /status/{job_id} endpoint should return the status and result (if available). The result would be a link to the generated media file.
+
+
+  2. Async Job Queue
+  Implement an asynchronous job queue using Celery with Redis for both the broker and the results.
+  Each job should:
+
+  Call the Replicate API - use the python sdk. Reference: https://github.com/replicate/replicate-python
+  Handle failures with automatic retries.
+
+  Store the resulting image persistently.
+  Update job status in a persistent store - use PostgreSQL).
+
+  3. Persistent Storage
+
+  Store the following in a database:
+
+  Job metadata (prompt, parameters, status, timestamps, retry attempts, etc.).
+  Create a Job model to store this. Include the Celery task_id as one of the fields.
+  The /generate endpoint should create this record, returning the job_id
+  Use Celery task_postrun signal to update the status of this job and url of generated media, and retry attempts, and any error messages.
+
+  Store the media files using boto3 with minio - we'll change the url endpoint to switch between local storage and external s3 bucket.
+
+
+  Requirements
+
+  Asynchronous Architecture: All external I/O (e.g., HTTP, file, DB) should be async-compatible.
+
+  Retries: Implement retry logic for failed jobs with exponential backoff. Initial backoff is 5 seconds. Stop retrying after the backoff is over 1 hour. Log errors.
+
+  Error Handling: Gracefully handle and persist errors.
+
+  Configuration: Use .env or similar config pattern for secrets and service URLs.
+  We want these configurable by .env:
+  create a .env.development file.
+  s3 endpoint and credentials
+  Replicate AI api token.
+
+  Reusability: Design components (e.g., job handler, media client) as reusable modules.
+
+  Clean Architecture: Apply principles of separation of concerns (API, services, tasks, models).
+
+  Typed Pydantic models and response validation
+
+  Dockerized setup - create a docker compose file for all services, plus the main application.
+
+  Usage of Alembic for schema migrations
+
+  Async ORM - use Tortoise ORM
+
+---
+
+> use int for job id. uuid is better, but for quick dev and demo purposes, it's easier to use.
+
+---
+
+> We should update the status of the job always, whether it succeeds or fails.
+
+---
+
+> when returning the media_url, use a presigned url
+
+---
+
+> We need to store the s3 key in the Job model. generate the presigned_url from the s3_key and bucket. then when we return JobStatusResponse, return the presigned_media_url
+   along with the medial url
+
+---
+
+> {
+      "detail": "Failed to get job status: column \"s3_key\" does not exist"
+  }
+
+---
+
+> docker exec -it c9eb22fc3f3a aerich init-db
+  Inited models already, or delete migrations/models and try again.
+  Traceback (most recent call last):
+    File "/usr/local/bin/aerich", line 8, in <module>
+      sys.exit(main())
+               ^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/aerich/cli.py", line 265, in main
+      cli()
+    File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1442, in __call__
+      return self.main(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1363, in main
+      rv = self.invoke(ctx)
+           ^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1830, in invoke
+      return _process_result(sub_ctx.command.invoke(sub_ctx))
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1226, in invoke
+      return ctx.invoke(self.callback, **ctx.params)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/click/core.py", line 794, in invoke
+      return callback(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/click/decorators.py", line 34, in new_func
+      return f(get_current_context(), *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/aerich/cli.py", line 34, in wrapper
+      loop.run_until_complete(Tortoise.close_connections())
+    File "/usr/local/lib/python3.11/asyncio/base_events.py", line 654, in run_until_complete
+      return future.result()
+             ^^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/tortoise/__init__.py", line 615, in close_connections
+      await connections.close_all()
+    File "/usr/local/lib/python3.11/site-packages/tortoise/connection.py", line 188, in close_all
+      tasks = [conn.close() for conn in self.all()]
+                                        ^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/tortoise/connection.py", line 177, in all
+      return [self.get(alias) for alias in self.db_config]
+                                           ^^^^^^^^^^^^^^
+    File "/usr/local/lib/python3.11/site-packages/tortoise/connection.py", line 48, in db_config
+      raise ConfigurationError(
+  tortoise.exceptions.ConfigurationError: DB configuration not initialised. Make sure to call Tortoise.init with a valid configuration before attempting to create 
+  connections.    
+  exit status 1  docker main app container: c9eb22fc3f3a docker postgres container: d03159fb9e2b
+
+---
+
+> The returned presigned_media_url is null: "media_url": "http://minio:9000/media-generation/jobs/1/b3134803-e3f9-49c0-89c7-3b20141abc50.jpg",
+      "presigned_media_url": null,
+      "error_message": null,
+
+---
+
+> The environment setting in docker compose file is overwriting all the env vars. remove the environment settings and move them to .env with the same defaults. then let the
+   config.py use .env.development to override default settings
+
+---
+
+> we don't need the env_file setting in docker-compose either so remove those.
+
+---
+
+> /exit 
+  ⎿  (no content)
+---
+
+Let me know if you want this as a file or in a different format!

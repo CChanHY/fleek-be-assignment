@@ -1,0 +1,5 @@
+# Environment files
+.env.development
+
+# Windows Zone.Identifier files
+*:Zone.Identifier
