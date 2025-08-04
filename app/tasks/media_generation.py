@@ -49,18 +49,23 @@ def generate_media_task(self, job_id: int) -> dict:
             if not media_urls:
                 raise Exception("No media URLs returned from Replicate")
             
-            s3_key = await storage_service.upload_from_url(media_urls[0], job_id)
+            media_items = []
+            for media_url in media_urls:
+                s3_key = await storage_service.upload_from_url(media_url, job_id)
+                media_items.append({
+                    "media_url": media_url,
+                    "s3_key": s3_key
+                })
             
             await job.update_from_dict({
                 "status": JobStatus.COMPLETED,
-                "media_url": media_urls[0],
-                "s3_key": s3_key,
+                "media": media_items,
                 "completed_at": datetime.utcnow()
             })
             await job.save()
             
             logger.info(f"Successfully completed media generation for job {job_id}")
-            return {"status": "success", "s3_key": s3_key}
+            return {"status": "success", "media": media_items}
             
         except Exception as e:
             logger.error(f"Error in media generation for job {job_id}: {str(e)}")

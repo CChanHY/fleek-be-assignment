@@ -24,8 +24,7 @@ class Job(Model):
     output_format = fields.CharField(max_length=50, null=True)
     
     status = fields.CharEnumField(JobStatus, default=JobStatus.PENDING)
-    media_url = fields.TextField(null=True)
-    s3_key = fields.TextField(null=True)
+    media = fields.JSONField(null=True)
     error_message = fields.TextField(null=True)
     retry_count = fields.IntField(default=0)
     

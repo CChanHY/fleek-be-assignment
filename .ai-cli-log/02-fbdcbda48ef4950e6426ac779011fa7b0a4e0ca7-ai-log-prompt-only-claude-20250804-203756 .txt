@@ -1,0 +1,23 @@
+Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> when num_outputs is greater than 1, several media files can be returned. we need to store each one to s3. change Job model media_url and s3_key fields to a media field 
+  which is a json field with an array of {media_url, s3_key}. also, we should return the array {media_url, presigned_media_url} in JobStatusResponse. also create the 
+  migration for this db change.
+
+---
+
+> we should return a media field with {media_url, presigned_media_url} instead of 2 arrays
+
+---
+
+> "detail": "Failed to get job status: 'Job' object has no attribute 's3_key'"
+
+---
+
+> /exit 
+  ⎿  (no content)
+---
+
+Let me know if you want this in a different format!

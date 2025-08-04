@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from app.models.job import JobStatus
 
@@ -26,8 +26,7 @@ class JobStatusResponse(BaseModel):
     num_outputs: int
     seed: Optional[int]
     output_format: Optional[str]
-    media_url: Optional[str]
-    presigned_media_url: Optional[str]
+    media: Optional[List[dict]]
     error_message: Optional[str]
     retry_count: int
     created_at: datetime

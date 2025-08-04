@@ -53,25 +53,21 @@ async def get_job_status(job_id: int):
                 detail=f"Job {job_id} not found"
             )
         
-        presigned_media_url = None
-        s3_key = job.s3_key
-        
-        # Handle legacy jobs where s3_key is null but media_url contains S3 URL
-        if not s3_key and job.media_url and job.media_url.startswith(f"http"):
-            try:
-                # Extract S3 key from URL like: http://minio:9000/media-generation/jobs/1/file.jpg
-                # Should extract: jobs/1/file.jpg
-                url_parts = job.media_url.split("/")
-                if len(url_parts) >= 3:
-                    s3_key = "/".join(url_parts[-3:])  # Get last 3 parts: jobs/1/filename
-            except Exception as e:
-                logger.error(f"Error extracting S3 key from media_url for job {job_id}: {str(e)}")
-        
-        if s3_key:
-            try:
-                presigned_media_url = storage_service.get_presigned_url(s3_key)
-            except Exception as e:
-                logger.error(f"Error generating presigned URL for job {job_id}: {str(e)}")
+        media = []
+        if job.media and isinstance(job.media, list):
+            for media_item in job.media:
+                try:
+                    presigned_url = storage_service.get_presigned_url(media_item['s3_key'])
+                    media.append({
+                        'media_url': media_item['media_url'],
+                        'presigned_media_url': presigned_url
+                    })
+                except Exception as e:
+                    logger.error(f"Error generating presigned URL for job {job_id}: {str(e)}")
+                    media.append({
+                        'media_url': media_item.get('media_url'),
+                        'presigned_media_url': None
+                    })
         
         return JobStatusResponse(
             job_id=job.id,
@@ -81,8 +77,7 @@ async def get_job_status(job_id: int):
             num_outputs=job.num_outputs,
             seed=job.seed,
             output_format=job.output_format,
-            media_url=job.media_url,
-            presigned_media_url=presigned_media_url,
+            media=media,
             error_message=job.error_message,
             retry_count=job.retry_count,
             created_at=job.created_at,
