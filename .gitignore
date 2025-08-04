@@ -1,5 +1,10 @@
 # Environment files
 .env.development
 
+# Python cache files
+**/__pycache__/
+*.pyc
+*.pyo
+
 # Windows Zone.Identifier files
 *:Zone.Identifier
