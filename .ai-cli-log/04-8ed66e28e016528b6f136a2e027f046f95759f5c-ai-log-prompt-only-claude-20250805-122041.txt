@@ -1,0 +1,44 @@
+Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> Create a job record for each persist_media_to_s3 task. These records will have a parent_id which will point to its associated generate_media task. create these records 
+  upon orchestrate_media_workflow before the subtasks are enqueued. when each persist_media_to_s3 task completes, it should update its own Job record with the results. 
+  JobStatusResponse should  thus query the child Job records to show the status of each media upload so the caller can see which uploads are complete and which are pending.
+
+---
+
+> don't create a child_jobs field. instead, use the child jobs to create the array of json objects in the media field. But now those objects will also include a status, 
+  which is the status of the child job.
+
+---
+
+> we also need a migration for the new parent_id field in Job
+
+---
+
+> it's in a docker container so you'll have to use docker exec app
+
+---
+
+> when creating child jobs, leave model, prompt, num_outputs, celery_task_id fields blank. also update the celery_task_id once the task starts running (when we update the 
+  status to processing)
+
+---
+
+> something went wrong, child job records are not being created.
+
+---
+
+> i don't think that was the problem. we pass media_urls to the persist task, so we don't need to write it to the job record. but celery_task_id is unique and now that we 
+  are setting it to blank we can't create those records. so revert it to the temporary unique identifier we had before. use "pending" in the identifier to mark it as such.
+
+---
+
+> put in the media field as one of the json fields
+
+---
+
+> /exit 
+  ⎿  (no content)
+---

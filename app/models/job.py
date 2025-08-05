@@ -16,6 +16,7 @@ class JobStatus(str, Enum):
 class Job(Model):
     id = fields.IntField(pk=True)
     celery_task_id = fields.CharField(max_length=255, unique=True)
+    parent_id = fields.IntField(null=True)
     
     model = fields.CharField(max_length=255)
     prompt = fields.TextField()

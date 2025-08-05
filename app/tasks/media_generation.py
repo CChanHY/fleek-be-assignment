@@ -24,17 +24,52 @@ class CallbackTask(Task):
 
 
 @celery_app.task(bind=True, base=CallbackTask)
-def persist_media_to_s3(self, media_url: str, job_id: int) -> Dict:
+def persist_media_to_s3(self, media_url: str, job_id: int, child_job_id: int) -> Dict:
     """Upload a single media file to S3."""
     async def _upload_media():
         await Tortoise.init(config=TORTOISE_ORM)
         try:
+            # Update child job status to processing and set celery_task_id
+            child_job = await Job.get(id=child_job_id)
+            await child_job.update_from_dict({
+                "celery_task_id": self.request.id,
+                "status": JobStatus.PROCESSING,
+                "started_at": datetime.utcnow()
+            })
+            await child_job.save()
+            
             s3_key = await storage_service.upload_from_url(media_url, job_id)
             logger.info(f"Successfully uploaded media {media_url} to S3 with key: {s3_key}")
+            
+            # Update child job with completion status and results
+            await child_job.update_from_dict({
+                "status": JobStatus.COMPLETED,
+                "media": [{
+                    "media_url": media_url,
+                    "s3_key": s3_key
+                }],
+                "completed_at": datetime.utcnow()
+            })
+            await child_job.save()
+            
             return {
                 "media_url": media_url,
-                "s3_key": s3_key
+                "s3_key": s3_key,
+                "child_job_id": child_job_id
             }
+        except Exception as e:
+            # Update child job with failure status
+            try:
+                child_job = await Job.get(id=child_job_id)
+                await child_job.update_from_dict({
+                    "status": JobStatus.FAILED,
+                    "error_message": str(e),
+                    "completed_at": datetime.utcnow()
+                })
+                await child_job.save()
+            except Exception as update_error:
+                logger.error(f"Failed to update child job {child_job_id} status: {str(update_error)}")
+            raise e
         finally:
             await Tortoise.close_connections()
     
@@ -42,12 +77,13 @@ def persist_media_to_s3(self, media_url: str, job_id: int) -> Dict:
 
 
 @celery_app.task(bind=True, base=CallbackTask)
-def trigger_media_persistence_chord(self, media_urls: List[str], job_id: int):
+def trigger_media_persistence_chord(self, media_urls: List[str], job_id: int, child_job_ids: List[int]):
     """Trigger parallel media uploads using a dynamic chord."""
     logger.info(f"Triggering chord for {len(media_urls)} media files for job {job_id}")
     
-    # Create parallel upload tasks
-    upload_tasks = [persist_media_to_s3.s(media_url, job_id) for media_url in media_urls]
+    # Create parallel upload tasks with corresponding child job IDs
+    upload_tasks = [persist_media_to_s3.s(media_url, job_id, child_job_id) 
+                   for media_url, child_job_id in zip(media_urls, child_job_ids)]
     
     # Create chord with callback
     job_result = chord(upload_tasks)(finalize_media_generation.s(job_id))
@@ -104,8 +140,29 @@ def orchestrate_media_workflow(self, result: Dict) -> Dict:
         media_urls = result["media_urls"]
         job_id = result["job_id"]
         
-        # Trigger the chord for parallel uploads
-        return trigger_media_persistence_chord.delay(media_urls, job_id)
+        async def _create_child_jobs():
+            await Tortoise.init(config=TORTOISE_ORM)
+            try:
+                child_job_ids = []
+                for i, media_url in enumerate(media_urls):
+                    child_job = await Job.create(
+                        celery_task_id=f"{job_id}_upload_{i}_pending",
+                        parent_id=job_id,
+                        model="",
+                        prompt="",
+                        num_outputs=0,
+                        media=[{"media_url": media_url}],
+                        status=JobStatus.PENDING
+                    )
+                    child_job_ids.append(child_job.id)
+                return child_job_ids
+            finally:
+                await Tortoise.close_connections()
+        
+        child_job_ids = asyncio.run(_create_child_jobs())
+        
+        # Trigger the chord for parallel uploads with child job IDs
+        return trigger_media_persistence_chord.delay(media_urls, job_id, child_job_ids)
     else:
         # If media generation returned a different status, pass it through
         return result
