@@ -1,0 +1,50 @@
+Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> Refactor ReplicateService so we can use different providers. Let's make an interface called MediaGeneratorService, which ReplicateService implements. Also create a 
+  FakeMediaGeneratorService which implements the same interface and returns hardcoded values. Create a factory that returns the concrete implementation based on configs. 
+  Change all call sites to use the factory.
+
+---
+
+> try docker compose exec app (it's in a docker container)
+
+---
+
+> update .env and .env.development with the new setting
+
+---
+
+> Add a static file serving endpoint for serving static files like http://localhost/static. create a dummy image file to be served from http://localhost/static/fake.jpg. 
+  have FakeMediaGenerationService return this image when called.
+
+---
+
+> don't update the config, just hard code it into fakemediageneratorservice
+
+---
+
+> keep the ability to return multiple urls. just add 2 more fake images with indexes and have the fake_media_generator_service return those
+
+---
+
+> we need to add the port number: "media_url": "http://localhost/static/fake.jpg",
+              "status": "retry",
+              "error_message": "All connection attempts failed",
+
+---
+
+> {
+              "media_url": "http://localhost:8000/static/fake1.jpg",
+              "status": "retry",
+              "error_message": "All connection attempts failed",
+              "started_at": "2025-08-05T12:10:05.572131Z",
+              "completed_at": null
+          },  but I can access the file at that url through the browser and curl
+
+---
+
+> /exit 
+  ⎿  (no content)
+---

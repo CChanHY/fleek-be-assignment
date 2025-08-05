@@ -2,11 +2,12 @@ import replicate
 import logging
 from typing import Any, Dict, List, Optional
 from app.core.config import settings
+from app.services.media_generator_service import MediaGeneratorService
 
 logger = logging.getLogger(__name__)
 
 
-class ReplicateService:
+class ReplicateService(MediaGeneratorService):
     def __init__(self):
         self.client = replicate.Client(api_token=settings.replicate_api_token)
     
@@ -46,5 +47,3 @@ class ReplicateService:
             logger.error(f"Error generating media with Replicate: {str(e)}")
             raise e
 
-
-replicate_service = ReplicateService()

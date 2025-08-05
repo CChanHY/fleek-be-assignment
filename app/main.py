@@ -1,9 +1,11 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from app.core.database import init_db, close_db
 from app.core.logging import setup_logging
 from app.api.routes import router
 import logging
+import os
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -26,6 +28,11 @@ app = FastAPI(
 )
 
 app.include_router(router, prefix="/api/v1")
+
+# Mount static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 @app.get("/")

@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     
     replicate_api_token: str
+    media_generator_provider: str = "replicate"
     
     s3_endpoint_url: str = "http://localhost:9000"
     s3_access_key_id: str = "minioadmin"

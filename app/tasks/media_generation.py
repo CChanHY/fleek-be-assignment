@@ -7,7 +7,7 @@ from celery.exceptions import Retry
 from tortoise import Tortoise
 from app.tasks.celery_app import celery_app
 from app.models.job import Job, JobStatus
-from app.services.replicate_service import replicate_service
+from app.services.media_generator_factory import get_media_generator_service
 from app.services.storage_service import storage_service
 from app.core.config import settings
 from app.core.database import TORTOISE_ORM
@@ -315,7 +315,8 @@ def generate_media_task(self, job_id: int) -> dict:
             
             logger.info(f"Starting media generation for job {job_id}")
             
-            media_urls = await replicate_service.generate_media(
+            media_generator = get_media_generator_service()
+            media_urls = await media_generator.generate_media(
                 model=job.model,
                 prompt=job.prompt,
                 num_outputs=job.num_outputs,
@@ -324,7 +325,7 @@ def generate_media_task(self, job_id: int) -> dict:
             )
             
             if not media_urls:
-                raise Exception("No media URLs returned from Replicate")
+                raise Exception("No media URLs returned from media generator")
             
             # Trigger parallel media persistence using chord
             logger.info(f"Media generation completed for job {job_id}. Triggering parallel uploads.")
