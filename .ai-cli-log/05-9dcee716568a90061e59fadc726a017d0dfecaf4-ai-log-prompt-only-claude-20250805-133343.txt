@@ -1,0 +1,52 @@
+Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> Double check that celery tasks are backing off exponentially up to a maximum of 1 hour.
+
+---
+
+> autoretry_for seems to be wrong here since we're handling retrying ourselves: @celery_app.task(bind=True, base=CallbackTask, autoretry_for=(Exception,))
+  def generate_media_task(self, job_id: int) -> dict:
+
+---
+
+> persist_media_to_s3 doesn't have retry logic. use the same as the generator task.
+
+---
+
+> add retry logic like for other tasks: trigger_media_persistence_chord
+
+---
+
+> implement in the same way as generate_media_task and persist_media_to_s3
+
+---
+
+> do the same for finalize_media_generation
+
+---
+
+> make this idempotent, making sure we don't create the child jobs more than once: orchestrate_media_workflow
+
+---
+
+> it's possible only some of the children were created. identify by the media_url.
+
+---
+
+> we need to check specifically that the media_url: field contains media_url. the object may have other fields in it.
+
+---
+
+> add retry logic to orchestrate_media_workflow as well
+
+---
+
+> Is it possible to DRY up the retry logic according to this: │╰─────────────────────────────────────────────────────────────────────────────────────
+
+---
+
+> /exit 
+  ⎿  (no content)
+---

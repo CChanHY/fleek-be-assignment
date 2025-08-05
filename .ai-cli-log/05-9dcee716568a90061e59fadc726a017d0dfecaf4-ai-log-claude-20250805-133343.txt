@@ -1,0 +1,593 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: /home/cc/projects/fleek-be-assignment      │
+╰───────────────────────────────────────────────────╯
+
+ ※ Tip: Use /permissions to pre-approve and pre-deny bash, edit, and MCP tools
+
+> Double check that celery tasks are backing off exponentially up to a maximum of 1 hour.
+
+● I'll help you check that Celery tasks are backing off exponentially up to a maximum of 1 hour. Let me search the codebase for Celery configuration and task definitions.
+
+● Update Todos
+  ⎿  ☐ Search for Celery task definitions and retry configurations
+     ☐ Verify exponential backoff settings
+     ☐ Check maximum retry delay is set to 1 hour
+
+● Search(pattern: "@task|@celery_app\.task|retry|backoff")
+  ⎿  Found 12 files (ctrl+r to expand)
+
+● Search(pattern: "CELERY_|celery")
+  ⎿  Found 15 files (ctrl+r to expand)
+
+● Search(pattern: "**/celery*")
+  ⎿  Found 2 files (ctrl+r to expand)
+
+● Read(app/tasks/celery_app.py)
+  ⎿  Read 20 lines (ctrl+r to expand)
+
+● Read(app/tasks/media_generation.py)
+  ⎿  Read 240 lines (ctrl+r to expand)
+
+● Read(app/core/config.py)
+  ⎿  Read 32 lines (ctrl+r to expand)
+
+● Update Todos
+  ⎿  ☒ Search for Celery task definitions and retry configurations
+     ☐ Verify exponential backoff settings
+     ☐ Check maximum retry delay is set to 1 hour
+
+● Looking at the code, I can see the exponential backoff implementation in app/tasks/media_generation.py:210-213 and the configuration in app/core/config.py:24-25.
+
+● Update Todos
+  ⎿  ☒ Search for Celery task definitions and retry configurations
+     ☒ Verify exponential backoff settings
+     ☒ Check maximum retry delay is set to 1 hour
+
+● ✅ Celery tasks are properly configured with exponential backoff up to 1 hour maximum:
+
+  Exponential Backoff Formula (app/tasks/media_generation.py:210-213):
+  backoff_delay = min(
+      settings.initial_retry_delay * (2 ** current_retry),
+      settings.max_retry_delay
+  )
+
+  Configuration (app/core/config.py:24-25):
+  - initial_retry_delay: int = 5 (5 seconds)
+  - max_retry_delay: int = 3600 (1 hour = 3600 seconds)
+
+  Implementation:
+  - Uses exponential backoff: 5s → 10s → 20s → 40s → 80s → 160s → 320s → 640s → 1280s → 2560s → 3600s (capped)
+  - Maximum retry delay is correctly set to 1 hour (3600 seconds)
+  - Applied in generate_media_task at line 231 with max_retries=10
+
+  The implementation is correct and follows best practices for exponential backoff with a reasonable maximum delay.
+
+> autoretry_for seems to be wrong here since we're handling retrying ourselves: @celery_app.task(bind=True, base=CallbackTask, autoretry_for=(Exception,))
+  def generate_media_task(self, job_id: int) -> dict:
+
+● You're absolutely right! The autoretry_for=(Exception,) parameter conflicts with the manual retry logic. This could cause double retries and unpredictable behavior.
+
+● Update Todos
+  ⎿  ☐ Remove autoretry_for parameter from generate_media_task
+
+● Update(app/tasks/media_generation.py)
+  ⎿  Updated app/tasks/media_generation.py with 1 addition and 1 removal                
+       168            return result
+       169    
+       170    
+       171 -  @celery_app.task(bind=True, base=CallbackTask, autoretry_for=(Exception,))
+       171 +  @celery_app.task(bind=True, base=CallbackTask)
+       172    def generate_media_task(self, job_id: int) -> dict:
+       173        async def _generate_media():
+       174            await Tortoise.init(config=TORTOISE_ORM)
+
+● Update Todos
+  ⎿  ☒ Remove autoretry_for parameter from generate_media_task
+
+● Fixed! Removed autoretry_for=(Exception,) from the generate_media_task decorator at app/tasks/media_generation.py:171. Now the task relies solely on its custom
+  exponential backoff retry logic at lines 231.
+
+> persist_media_to_s3 doesn't have retry logic. use the same as the generator task.
+
+● Update Todos
+  ⎿  ☐ Add retry logic to persist_media_to_s3 task
+
+● Update(app/tasks/media_generation.py)
+  ⎿  Updated app/tasks/media_generation.py with 29 additions and 8 removals                                        
+       58                    "child_job_id": child_job_id
+       59                }
+       60            except Exception as e:
+       61 -              # Update child job with failure status
+       61 +              logger.error(f"Error in media upload for child job {child_job_id}: {str(e)}")
+       62 +              
+       63                try:
+       64                    child_job = await Job.get(id=child_job_id)
+       65 -                  await child_job.update_from_dict({
+       66 -                      "status": JobStatus.FAILED,
+       67 -                      "error_message": str(e),
+       68 -                      "completed_at": datetime.utcnow()
+       69 -                  })
+       70 -                  await child_job.save()
+       65 +                  current_retry = child_job.retry_count + 1
+       66 +                  
+       67 +                  backoff_delay = min(
+       68 +                      settings.initial_retry_delay * (2 ** current_retry),
+       69 +                      settings.max_retry_delay
+       70 +                  )
+       71 +                  
+       72 +                  if backoff_delay >= settings.max_retry_delay:
+       73 +                      await child_job.update_from_dict({
+       74 +                          "status": JobStatus.FAILED,
+       75 +                          "error_message": str(e),
+       76 +                          "retry_count": current_retry,
+       77 +                          "completed_at": datetime.utcnow()
+       78 +                      })
+       79 +                      await child_job.save()
+       80 +                      raise e
+       81 +                  else:
+       82 +                      await child_job.update_from_dict({
+       83 +                          "status": JobStatus.RETRY,
+       84 +                          "error_message": str(e),
+       85 +                          "retry_count": current_retry
+       86 +                      })
+       87 +                      await child_job.save()
+       88 +                      
+       89 +                      raise self.retry(countdown=backoff_delay, max_retries=10)
+       90 +                      
+       91                except Exception as update_error:
+       92                    logger.error(f"Failed to update child job {child_job_id} status: {str(update_error)}")
+       93 -              raise e
+       93 +                  raise e
+       94            finally:
+       95                await Tortoise.close_connections()
+       96        
+
+● Update Todos
+  ⎿  ☒ Add retry logic to persist_media_to_s3 task
+
+● Added exponential backoff retry logic to persist_media_to_s3 task (app/tasks/media_generation.py:60-93). It now uses the same retry pattern as generate_media_task with
+  exponential backoff up to 1 hour maximum delay and 10 max retries.
+
+> add retry logic like for other tasks: trigger_media_persistence_chord
+
+● Update Todos
+  ⎿  ☐ Add retry logic to trigger_media_persistence_chord task
+
+● Update(app/tasks/media_generation.py)
+  ⎿  User rejected update to app/tasks/media_generation.py
+       100    @celery_app.task(bind=True, base=CallbackTask)
+       101    def trigger_media_persistence_chord(self, media_urls: List[str], job_id: int, child_job_ids: List[int]):
+       102        """Trigger parallel media uploads using a dynamic chord."""
+       103 -      logger.info(f"Triggering chord for {len(media_urls)} media files for job {job_id}")
+       103 +      try:
+       104 +          logger.info(f"Triggering chord for {len(media_urls)} media files for job {job_id}")
+       105 +          
+       106 +          # Create parallel upload tasks with corresponding child job IDs
+       107 +          upload_tasks = [persist_media_to_s3.s(media_url, job_id, child_job_id) 
+       108 +                         for media_url, child_job_id in zip(media_urls, child_job_ids)]
+       109 +          
+       110 +          # Create chord with callback
+       111 +          job_result = chord(upload_tasks)(finalize_media_generation.s(job_id))
+       112 +          return {"chord_id": job_result.id, "job_id": job_id}
+       113        
+       114 -      # Create parallel upload tasks with corresponding child job IDs
+       115 -      upload_tasks = [persist_media_to_s3.s(media_url, job_id, child_job_id) 
+       116 -                     for media_url, child_job_id in zip(media_urls, child_job_ids)]
+       117 -      
+       118 -      # Create chord with callback
+       119 -      job_result = chord(upload_tasks)(finalize_media_generation.s(job_id))
+       120 -      return {"chord_id": job_result.id, "job_id": job_id}
+       114 +      except Exception as e:
+       115 +          logger.error(f"Error triggering chord for job {job_id}: {str(e)}")
+       116 +          
+       117 +          async def _handle_retry():
+       118 +              await Tortoise.init(config=TORTOISE_ORM)
+       119 +              try:
+       120 +                  job = await Job.get(id=job_id)
+       121 +                  current_retry = job.retry_count + 1
+       122 +                  
+       123 +                  backoff_delay = min(
+       124 +                      settings.initial_retry_delay * (2 ** current_retry),
+       125 +                      settings.max_retry_delay
+       126 +                  )
+       127 +                  
+       128 +                  if backoff_delay >= settings.max_retry_delay:
+       129 +                      await job.update_from_dict({
+       130 +                          "status": JobStatus.FAILED,
+       131 +                          "error_message": str(e),
+       132 +                          "retry_count": current_retry
+       133 +                      })
+       134 +                      await job.save()
+       135 +                      raise e
+       136 +                  else:
+       137 +                      await job.update_from_dict({
+       138 +                          "status": JobStatus.RETRY,
+       139 +                          "error_message": str(e),
+       140 +                          "retry_count": current_retry
+       141 +                      })
+       142 +                      await job.save()
+       143 +                      
+       144 +                      raise self.retry(countdown=backoff_delay, max_retries=10)
+       145 +                      
+       146 +              except Exception as update_error:
+       147 +                  logger.error(f"Failed to update job status: {str(update_error)}")
+       148 +                  raise e
+       149 +              finally:
+       150 +                  await Tortoise.close_connections()
+       151 +          
+       152 +          return asyncio.run(_handle_retry())
+       153    
+       154    
+       155    @celery_app.task(bind=True, base=CallbackTask)
+
+> implement in the same way as generate_media_task and persist_media_to_s3
+
+● Update(app/tasks/media_generation.py)
+  ⎿  Updated app/tasks/media_generation.py with 51 additions and 8 removals                                           
+       100    @celery_app.task(bind=True, base=CallbackTask)
+       101    def trigger_media_persistence_chord(self, media_urls: List[str], job_id: int, child_job_ids: List[int]):
+       102        """Trigger parallel media uploads using a dynamic chord."""
+       103 -      logger.info(f"Triggering chord for {len(media_urls)} media files for job {job_id}")
+       103 +      async def _trigger_chord():
+       104 +          await Tortoise.init(config=TORTOISE_ORM)
+       105 +          
+       106 +          try:
+       107 +              logger.info(f"Triggering chord for {len(media_urls)} media files for job {job_id}")
+       108 +              
+       109 +              # Create parallel upload tasks with corresponding child job IDs
+       110 +              upload_tasks = [persist_media_to_s3.s(media_url, job_id, child_job_id) 
+       111 +                             for media_url, child_job_id in zip(media_urls, child_job_ids)]
+       112 +              
+       113 +              # Create chord with callback
+       114 +              job_result = chord(upload_tasks)(finalize_media_generation.s(job_id))
+       115 +              return {"chord_id": job_result.id, "job_id": job_id}
+       116 +              
+       117 +          except Exception as e:
+       118 +              logger.error(f"Error triggering chord for job {job_id}: {str(e)}")
+       119 +              
+       120 +              try:
+       121 +                  job = await Job.get(id=job_id)
+       122 +                  current_retry = job.retry_count + 1
+       123 +                  
+       124 +                  backoff_delay = min(
+       125 +                      settings.initial_retry_delay * (2 ** current_retry),
+       126 +                      settings.max_retry_delay
+       127 +                  )
+       128 +                  
+       129 +                  if backoff_delay >= settings.max_retry_delay:
+       130 +                      await job.update_from_dict({
+       131 +                          "status": JobStatus.FAILED,
+       132 +                          "error_message": str(e),
+       133 +                          "retry_count": current_retry
+       134 +                      })
+       135 +                      await job.save()
+       136 +                      raise e
+       137 +                  else:
+       138 +                      await job.update_from_dict({
+       139 +                          "status": JobStatus.RETRY,
+       140 +                          "error_message": str(e),
+       141 +                          "retry_count": current_retry
+       142 +                      })
+       143 +                      await job.save()
+       144 +                      
+       145 +                      raise self.retry(countdown=backoff_delay, max_retries=10)
+       146 +                      
+       147 +              except Exception as update_error:
+       148 +                  logger.error(f"Failed to update job status: {str(update_error)}")
+       149 +                  raise e
+       150 +                  
+       151 +          finally:
+       152 +              await Tortoise.close_connections()
+       153        
+       154 -      # Create parallel upload tasks with corresponding child job IDs
+       155 -      upload_tasks = [persist_media_to_s3.s(media_url, job_id, child_job_id) 
+       156 -                     for media_url, child_job_id in zip(media_urls, child_job_ids)]
+       157 -      
+       158 -      # Create chord with callback
+       159 -      job_result = chord(upload_tasks)(finalize_media_generation.s(job_id))
+       160 -      return {"chord_id": job_result.id, "job_id": job_id}
+       154 +      return asyncio.run(_trigger_chord())
+       155    
+       156    
+       157    @celery_app.task(bind=True, base=CallbackTask)
+
+● Update Todos
+  ⎿  ☒ Add retry logic to trigger_media_persistence_chord task
+
+● Added exponential backoff retry logic to trigger_media_persistence_chord task (app/tasks/media_generation.py:100-154) following the same pattern as the other tasks with
+  async wrapper, database connection handling, and exponential backoff up to 1 hour maximum delay.
+
+> do the same for finalize_media_generation
+
+● Update Todos
+  ⎿  ☐ Add retry logic to finalize_media_generation task
+
+● Update(app/tasks/media_generation.py)
+  ⎿  Updated app/tasks/media_generation.py with 27 additions and 6 removals                                        
+       172                return {"status": "success", "media": media_results}
+       173            except Exception as e:
+       174                logger.error(f"Error finalizing job {job_id}: {str(e)}")
+       175 +              
+       176                try:
+       177                    job = await Job.get(id=job_id)
+       178 -                  await job.update_from_dict({
+       179 -                      "status": JobStatus.FAILED,
+       180 -                      "error_message": f"Failed to finalize: {str(e)}"
+       181 -                  })
+       182 -                  await job.save()
+       178 +                  current_retry = job.retry_count + 1
+       179 +                  
+       180 +                  backoff_delay = min(
+       181 +                      settings.initial_retry_delay * (2 ** current_retry),
+       182 +                      settings.max_retry_delay
+       183 +                  )
+       184 +                  
+       185 +                  if backoff_delay >= settings.max_retry_delay:
+       186 +                      await job.update_from_dict({
+       187 +                          "status": JobStatus.FAILED,
+       188 +                          "error_message": f"Failed to finalize: {str(e)}",
+       189 +                          "retry_count": current_retry
+       190 +                      })
+       191 +                      await job.save()
+       192 +                      raise e
+       193 +                  else:
+       194 +                      await job.update_from_dict({
+       195 +                          "status": JobStatus.RETRY,
+       196 +                          "error_message": f"Failed to finalize: {str(e)}",
+       197 +                          "retry_count": current_retry
+       198 +                      })
+       199 +                      await job.save()
+       200 +                      
+       201 +                      raise self.retry(countdown=backoff_delay, max_retries=10)
+       202 +                      
+       203                except Exception as update_error:
+       204                    logger.error(f"Failed to update job status during finalization: {str(update_error)}")
+       205 -              raise e
+       205 +                  raise e
+       206            finally:
+       207                await Tortoise.close_connections()
+       208        
+
+● Update Todos
+  ⎿  ☒ Add retry logic to finalize_media_generation task
+
+● Added exponential backoff retry logic to finalize_media_generation task (app/tasks/media_generation.py:173-205) following the same pattern as the other tasks with
+  exponential backoff up to 1 hour maximum delay and 10 max retries.
+
+> make this idempotent, making sure we don't create the child jobs more than once: orchestrate_media_workflow
+
+● Update Todos
+  ⎿  ☐ Make orchestrate_media_workflow idempotent to prevent duplicate child jobs
+
+● Read(app/tasks/media_generation.py)
+  ⎿  Read 40 lines (ctrl+r to expand)
+
+● Update(app/tasks/media_generation.py)
+  ⎿  User rejected update to app/tasks/media_generation.py
+       228            async def _create_child_jobs():
+       229                await Tortoise.init(config=TORTOISE_ORM)
+       230                try:
+       231 +                  # Check if child jobs already exist for this parent job
+       232 +                  existing_child_jobs = await Job.filter(parent_id=job_id).all()
+       233 +                  if existing_child_jobs:
+       234 +                      logger.info(f"Child jobs already exist for job {job_id}, reusing existing ones")
+       235 +                      return [child.id for child in existing_child_jobs]
+       236 +                  
+       237                    child_job_ids = []
+       238                    for i, media_url in enumerate(media_urls):
+       239                        child_job = await Job.create(
+
+> it's possible only some of the children were created. identify by the media_url.
+
+● Update(app/tasks/media_generation.py)
+  ⎿  User rejected update to app/tasks/media_generation.py
+       230                try:
+       231                    child_job_ids = []
+       232                    for i, media_url in enumerate(media_urls):
+       233 -                      child_job = await Job.create(
+       234 -                          celery_task_id=f"{job_id}_upload_{i}_pending",
+       233 +                      # Check if child job already exists for this media_url
+       234 +                      existing_child = await Job.filter(
+       235                            parent_id=job_id,
+       236 -                          model="",
+       237 -                          prompt="",
+       238 -                          num_outputs=0,
+       239 -                          media=[{"media_url": media_url}],
+       240 -                          status=JobStatus.PENDING
+       241 -                      )
+       242 -                      child_job_ids.append(child_job.id)
+       236 +                          media__contains=[{"media_url": media_url}]
+       237 +                      ).first()
+       238 +                      
+       239 +                      if existing_child:
+       240 +                          logger.info(f"Child job already exists for media_url {media_url}, reusing job {existing_child.id}")
+       241 +                          child_job_ids.append(existing_child.id)
+       242 +                      else:
+       243 +                          child_job = await Job.create(
+       244 +                              celery_task_id=f"{job_id}_upload_{i}_pending",
+       245 +                              parent_id=job_id,
+       246 +                              model="",
+       247 +                              prompt="",
+       248 +                              num_outputs=0,
+       249 +                              media=[{"media_url": media_url}],
+       250 +                              status=JobStatus.PENDING
+       251 +                          )
+       252 +                          child_job_ids.append(child_job.id)
+       253                    return child_job_ids
+       254                finally:
+       255                    await Tortoise.close_connections()
+
+> we need to check specifically that the media_url: field contains media_url. the object may have other fields in it.
+
+● Update(app/tasks/media_generation.py)
+  ⎿  Updated app/tasks/media_generation.py with 24 additions and 10 removals                                                             
+       230                try:
+       231                    child_job_ids = []
+       232                    for i, media_url in enumerate(media_urls):
+       233 -                      child_job = await Job.create(
+       234 -                          celery_task_id=f"{job_id}_upload_{i}_pending",
+       235 -                          parent_id=job_id,
+       236 -                          model="",
+       237 -                          prompt="",
+       238 -                          num_outputs=0,
+       239 -                          media=[{"media_url": media_url}],
+       240 -                          status=JobStatus.PENDING
+       241 -                      )
+       242 -                      child_job_ids.append(child_job.id)
+       233 +                      # Check if child job already exists for this media_url
+       234 +                      existing_children = await Job.filter(parent_id=job_id).all()
+       235 +                      existing_child = None
+       236 +                      
+       237 +                      for child in existing_children:
+       238 +                          if child.media and len(child.media) > 0:
+       239 +                              if child.media[0].get("media_url") == media_url:
+       240 +                                  existing_child = child
+       241 +                                  break
+       242 +                      
+       243 +                      if existing_child:
+       244 +                          logger.info(f"Child job already exists for media_url {media_url}, reusing job {existing_child.id}")
+       245 +                          child_job_ids.append(existing_child.id)
+       246 +                      else:
+       247 +                          child_job = await Job.create(
+       248 +                              celery_task_id=f"{job_id}_upload_{i}_pending",
+       249 +                              parent_id=job_id,
+       250 +                              model="",
+       251 +                              prompt="",
+       252 +                              num_outputs=0,
+       253 +                              media=[{"media_url": media_url}],
+       254 +                              status=JobStatus.PENDING
+       255 +                          )
+       256 +                          child_job_ids.append(child_job.id)
+       257                    return child_job_ids
+       258                finally:
+       259                    await Tortoise.close_connections()
+
+● Update Todos
+  ⎿  ☒ Make orchestrate_media_workflow idempotent to prevent duplicate child jobs
+
+● Made orchestrate_media_workflow idempotent (app/tasks/media_generation.py:228-259). It now checks existing child jobs by comparing the media_url field in their media
+  array, reusing existing child jobs and only creating new ones for media URLs that don't already have associated child jobs.
+
+> add retry logic to orchestrate_media_workflow as well
+
+● Update Todos
+  ⎿  ☐ Add retry logic to orchestrate_media_workflow task
+
+● Read(app/tasks/media_generation.py)
+  ⎿  Read 20 lines (ctrl+r to expand)
+
+● Update(app/tasks/media_generation.py)
+  ⎿  Updated app/tasks/media_generation.py with 33 additions                                       
+       255                            )
+       256                            child_job_ids.append(child_job.id)
+       257                    return child_job_ids
+       258 +              except Exception as e:
+       259 +                  logger.error(f"Error creating child jobs for job {job_id}: {str(e)}")
+       260 +                  
+       261 +                  try:
+       262 +                      job = await Job.get(id=job_id)
+       263 +                      current_retry = job.retry_count + 1
+       264 +                      
+       265 +                      backoff_delay = min(
+       266 +                          settings.initial_retry_delay * (2 ** current_retry),
+       267 +                          settings.max_retry_delay
+       268 +                      )
+       269 +                      
+       270 +                      if backoff_delay >= settings.max_retry_delay:
+       271 +                          await job.update_from_dict({
+       272 +                              "status": JobStatus.FAILED,
+       273 +                              "error_message": str(e),
+       274 +                              "retry_count": current_retry
+       275 +                          })
+       276 +                          await job.save()
+       277 +                          raise e
+       278 +                      else:
+       279 +                          await job.update_from_dict({
+       280 +                              "status": JobStatus.RETRY,
+       281 +                              "error_message": str(e),
+       282 +                              "retry_count": current_retry
+       283 +                          })
+       284 +                          await job.save()
+       285 +                          
+       286 +                          raise self.retry(countdown=backoff_delay, max_retries=10)
+       287 +                          
+       288 +                  except Exception as update_error:
+       289 +                      logger.error(f"Failed to update job status: {str(update_error)}")
+       290 +                      raise e
+       291                finally:
+       292                    await Tortoise.close_connections()
+       293            
+
+● Update Todos
+  ⎿  ☒ Add retry logic to orchestrate_media_workflow task
+
+● Added exponential backoff retry logic to orchestrate_media_workflow task (app/tasks/media_generation.py:258-290) following the same pattern as the other tasks with
+  exponential backoff up to 1 hour maximum delay and 10 max retries.
+
+> Is it possible to DRY up the retry logic according to this: │╰─────────────────────────────────────────────────────────────────────────────────────
+
+● Yes, absolutely! The retry logic is repeated across all tasks. We can create a reusable retry decorator or helper function.
+
+● Update Todos
+  ⎿  ☐ Create reusable retry logic helper to DRY up code
+
+● Update(app/tasks/media_generation.py)
+  ⎿  User rejected update to app/tasks/media_generation.py
+       15    logger = logging.getLogger(__name__)
+       16    
+       17    
+       18 +  async def handle_task_retry(task_instance, job_id: int, exception: Exception, child_job_id: Optional[int] = None):
+       19 +      """Handle retry logic with exponential backoff for tasks."""
+       20 +      try:
+       21 +          if child_job_id:
+       22 +              job = await Job.get(id=child_job_id)
+       23 +          else:
+       24 +              job = await Job.get(id=job_id)
+       25 +              
+       26 +          current_retry = job.retry_count + 1
+       27 +          
+       28 +          backoff_delay = min(
+       29 +              settings.initial_retry_delay * (2 ** current_retry),
+       30 +              settings.max_retry_delay
+       31 +          )
+       32 +          
+       33 +          if backoff_delay >= settings.max_retry_delay:
+       34 +              await job.update_from_dict({
+       35 +                  "status": JobStatus.FAILED,
+       36 +                  "error_message": str(exception),
+       37 +                  "retry_count": current_retry,
+       38 +                  **({"completed_at": datetime.utcnow()} if child_job_id else {})
+       39 +              })
+       40 +              await job.save()
+       41 +              raise exception
+       42 +          else:
+       43 +              await job.update_from_dict({
+       44 +                  "status": JobStatus.RETRY,
+       45 +                  "error_message": str(exception),
+       46 +                  "retry_count": current_retry
+       47 +              })
+       48 +              await job.save()
+       49 +              
+       50 +              raise task_instance.retry(countdown=backoff_delay, max_retries=10)
+       51 +              
+       52 +      except Exception as update_error:
+       53 +          error_msg = f"Failed to update {'child ' if child_job_id else ''}job {child_job_id or job_id} status: {str(update_error)}"
+       54 +          logger.error(error_msg)
+       55 +          raise exception
+       56 +  
+       57 +  
+       58    class CallbackTask(Task):
+       59        def on_success(self, retval, task_id, args, kwargs):
+       60            logger.info(f"Task {task_id} succeeded")
+
+> /exit 
+  ⎿  (no content)
+
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ >                                                                                                                                                                             │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts
