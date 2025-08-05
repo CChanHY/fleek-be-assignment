@@ -1,0 +1,67 @@
+Here are the **prompts only**, with everything after a `●` (and before the next `>`) removed:
+
+---
+
+> generate readme file with quick setup instructions
+
+---
+
+> Collapse local  development section and add a note that it is untested
+
+---
+
+> what would you say about the architecture overview of this project?
+
+---
+
+> Add this in a collapsible section under the Architectural Approach heading
+
+---
+
+> can you insert a mermaid diagram of the media_generation task flow where it says <orchestration diagram>
+
+---
+
+> simplify the graph by removing retries. show happy path only
+
+---
+
+> text is not very readable use a darker fond for nodes with a background colour
+
+---
+
+> can you explain the colour coding?
+
+---
+
+> Add a legend please
+
+---
+
+> can you make the graph smaller? it's quite bbig
+
+---
+
+> revert that change we lost some details
+
+---
+
+> can you put it in a collapsible section
+
+---
+
+> for the quick setup section add a note about creating a .env.development file and which keys need to be filled
+
+---
+
+> add MEDIA_GENERATOR_PROVIDER I made this default to fake in .env so add a note tto switch it to replicate if they want to use their own key. this is all optional now
+
+---
+
+> add a sixth section with sample curl calls and replies for /generate and /status
+
+---
+
+> /exit 
+  ⎿  (no content)
+---

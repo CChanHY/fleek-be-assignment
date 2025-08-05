@@ -1,6 +1,7 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 celery==5.3.4
+flower==2.0.1
 redis==5.0.1
 tortoise-orm[asyncpg]==0.20.0
 aerich==0.7.2
